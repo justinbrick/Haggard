@@ -5,8 +5,8 @@ namespace Haggard.Engine;
 
 public sealed class HaggardGameEngine : IGameEngine
 {
-    public event IGameEngine.EngineTickEvent Tick;
-    public event IGameEngine.EngineRenderEvent Render;
+    public event IGameEngine.EngineTickEvent? Tick;
+    public event IGameEngine.EngineRenderEvent? Render;
     public event Action? Started;
     public event Action? Starting;
     
@@ -25,8 +25,8 @@ public sealed class HaggardGameEngine : IGameEngine
         Started?.Invoke();
         while (!cancellationToken.IsCancellationRequested)
         {
-            Tick.Invoke(10);
-            Render.Invoke(10);
+            Tick?.Invoke(10);
+            Render?.Invoke(10);
             await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
         }
     }
