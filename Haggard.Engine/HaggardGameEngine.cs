@@ -1,21 +1,33 @@
-﻿namespace Haggard.Engine;
+﻿using System.Numerics;
+using Microsoft.Extensions.Logging;
 
-public class HaggardGameEngine : IGameEngine
+namespace Haggard.Engine;
+
+public sealed class HaggardGameEngine : IGameEngine
 {
-    public event Action<float>? Tick;
-    public event Action<float>? Render;
+    public event IGameEngine.EngineTickEvent Tick;
+    public event IGameEngine.EngineRenderEvent Render;
+    public event Action? Started;
+    public event Action? Starting;
+    
+    private readonly ILogger<HaggardGameEngine> _logger;
 
-    public HaggardGameEngine()
+    public HaggardGameEngine(ILogger<HaggardGameEngine> logger)
     {
-        
+        _logger = logger;
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Starting Haggard Game Engine");
+        Starting?.Invoke(); 
+        _logger.LogInformation("Haggard Game Engine Started");
+        Started?.Invoke();
         while (!cancellationToken.IsCancellationRequested)
         {
-            Tick?.Invoke(10);
-            await Task.Delay(TimeSpan.FromSeconds(1),CancellationToken.None);
+            Tick.Invoke(10);
+            Render.Invoke(10);
+            await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
         }
     }
 

@@ -1,4 +1,6 @@
-﻿namespace Haggard.Engine.Tests;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+
+namespace Haggard.Engine.Tests;
 
 public class EngineTests
 {
@@ -6,7 +8,7 @@ public class EngineTests
     public async Task EngineTicksEvent()
     {
         var cancellationToken = new CancellationTokenSource();
-        var engine = new HaggardGameEngine();
+        var engine = new HaggardGameEngine(NullLogger<HaggardGameEngine>.Instance);
         var tick = 0;
         engine.Tick += (_) => tick++;
 
