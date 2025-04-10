@@ -9,33 +9,33 @@ public interface IGameEngine
     /// A handler for when the game "ticks".
     /// <param name="deltaTime">the amount of time in seconds that have passed since the last tick.</param>
     /// </summary>
-    public delegate void EngineTickEvent(float deltaTime);
-    /// <summary>
-    /// A handler for when the game renders a frame.
-    /// <param name="deltaTime">the amount of time in seconds that have passed since the last frame</param>
-    /// </summary>
-    public delegate void EngineRenderEvent(float deltaTime);
+    delegate void EngineTickEvent(float deltaTime);
     /// <summary>
     /// Called when the game engine goes through a "tick".
     /// </summary>
-    public event EngineTickEvent Tick;
-    /// <summary>
-    /// Called when the game engine undergoes it's rendering phase.
-    /// </summary>
-    public event EngineRenderEvent Render;
+    event EngineTickEvent Tick;
     /// <summary>
     /// Called when the game is first starting.
     /// </summary>
-    public event Action Starting;
+    event Action Starting;
     /// <summary>
     /// Called when the game engine has finished loading, and can be considered "started."
     /// </summary>
-    public event Action Started;
+    event Action Started;
     /// <summary>
     /// Called when the game engine is stopping.
     /// </summary>
-    public event Action Stopping;
-
-    public Task StartAsync(CancellationToken cancellationToken = default);
-    public void Stop();
+    event Action Stopping;
+    /// <summary>
+    /// Starts the game in an asynchronous manner.
+    /// </summary>
+    /// <param name="cancellationToken">a cancellation token to use for a more graceful shutdown of the engine</param>
+    /// <returns></returns>
+    void Start(CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Signals to the engine to stop running.
+    /// This will not immediately stop, as the engine will first try to gracefully signal a stopping event before
+    /// closing. This is done after it completes the latest engine tick & render.
+    /// </summary>
+    void Stop();
 }

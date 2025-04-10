@@ -2,19 +2,9 @@
 
 public static class HaggardGameEngineExtensions
 {
-    public static async Task TemporaryRun(this HaggardGameEngine engine, TimeSpan? timeSpan = null)
+    public static Task StartBackground(this HaggardGameEngine engine)
     {
-        timeSpan ??= TimeSpan.FromSeconds(1); 
-        
-        var cancellationToken = new CancellationTokenSource();
-        await Task.WhenAll(engine.StartAsync(cancellationToken.Token), CancelTask());
-        return;
-
-        async Task CancelTask()
-        {
-            timeSpan ??= TimeSpan.FromSeconds(1);
-            await Task.Delay(timeSpan.Value, CancellationToken.None);
-            await cancellationToken.CancelAsync();
-        }    
+        ThreadPool.QueueUserWorkItem(_ => engine.Start(CancellationToken.None));
+        return Task.Delay(TimeSpan.FromMilliseconds(100));
     }
 }

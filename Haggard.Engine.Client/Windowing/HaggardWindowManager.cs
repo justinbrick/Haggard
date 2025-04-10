@@ -3,24 +3,12 @@ using Silk.NET.Windowing;
 
 namespace Haggard.Engine.Client.Windowing;
 
-public sealed class HaggardWindowManager
+public sealed class HaggardWindowManager : IWindowManager
 {
     private readonly ILogger<HaggardWindowManager> _logger;
     private readonly IGameEngine _gameEngine;
-    private bool _windowStopping = false;
-    private bool _engineStopping = false;
-
+    public event IWindowManager.WindowRenderEvent? Render;
     public IWindow? CurrentWindow { get; private set; }
-
-    private void SetWindow(IWindow window)
-    {
-        if (CurrentWindow != null)
-        {
-            throw new Exception("Haggard Windowing Manager has already been started");
-        }
-        window.Closing += OnWindowClosing;
-        CurrentWindow = window;
-    }
 
     public HaggardWindowManager(ILogger<HaggardWindowManager> logger, IGameEngine engine)
     {
@@ -33,24 +21,35 @@ public sealed class HaggardWindowManager
     private void OnEngineStarting()
     {
         _logger.LogTrace("Initializing window during start");
-        CurrentWindow = Window.Create(WindowOptions.DefaultVulkan);
-        CurrentWindow.Run();
+        CurrentWindow = Window.Create(WindowOptions.DefaultVulkan with
+        {
+            IsEventDriven = true
+        });
+        CurrentWindow.Closing += OnWindowClosing;
+        CurrentWindow.Render += OnWindowRender;
+        CurrentWindow.Initialize();
+        CurrentWindow.ContinueEvents();
     }
 
     private void OnWindowClosing()
     {
-        _windowStopping = true;
-        if (_engineStopping) return;
         _logger.LogTrace("Window closed, stopping engine");
+        _gameEngine.Stopping -= OnEngineStopping;  
+        _gameEngine.Stop();
     }
 
     private void OnEngineStopping()
     {
-        _engineStopping = true;
-        
-        if (_windowStopping) return;
         _logger.LogTrace("Closing window gracefully");
-        CurrentWindow?.Close();
-        CurrentWindow?.Dispose();
+        if (CurrentWindow is null) return;
+        CurrentWindow.Closing -= OnWindowClosing;
+        CurrentWindow.Close();
+        CurrentWindow.Dispose();
+        CurrentWindow = null;
+    }
+
+    private void OnWindowRender(double deltaTime)
+    { 
+        Render?.Invoke((float)deltaTime);
     }
 }

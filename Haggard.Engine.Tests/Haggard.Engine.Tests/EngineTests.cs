@@ -11,8 +11,7 @@ public class EngineTests
         var engine = Utils.CreateBasicEngine();
         var tick = 0;
         engine.Tick += (_) => tick++;
-        await engine.TemporaryRun();
-
+        await engine.StartBackground();
         Assert.NotEqual(0, tick);
     }
 }
