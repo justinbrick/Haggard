@@ -24,12 +24,18 @@ public interface IGameEngine
     /// </summary>
     public event EngineRenderEvent Render;
     /// <summary>
-    /// Called when the game engine has finished loading, and can be considered "started."
-    /// </summary>
-    public event Action Started;
-
-    /// <summary>
     /// Called when the game is first starting.
     /// </summary>
     public event Action Starting;
+    /// <summary>
+    /// Called when the game engine has finished loading, and can be considered "started."
+    /// </summary>
+    public event Action Started;
+    /// <summary>
+    /// Called when the game engine is stopping.
+    /// </summary>
+    public event Action Stopping;
+
+    public Task StartAsync(CancellationToken cancellationToken = default);
+    public void Stop();
 }

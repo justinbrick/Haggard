@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging.Abstractions;
+﻿using Haggard.Engine.Tests.Extensions;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Haggard.Engine.Tests;
 
@@ -7,20 +8,11 @@ public class EngineTests
     [Fact]
     public async Task EngineTicksEvent()
     {
-        var cancellationToken = new CancellationTokenSource();
-        var engine = new HaggardGameEngine(NullLogger<HaggardGameEngine>.Instance);
+        var engine = Utils.CreateBasicEngine();
         var tick = 0;
         engine.Tick += (_) => tick++;
+        await engine.TemporaryRun();
 
-        await Task.WhenAll(engine.RunAsync(cancellationToken.Token), CancelTask());
-        
         Assert.NotEqual(0, tick);
-        return;
-
-        async Task CancelTask()
-        {
-            await Task.Delay(TimeSpan.FromSeconds(1), CancellationToken.None);
-            await cancellationToken.CancelAsync();
-        }
     }
 }
