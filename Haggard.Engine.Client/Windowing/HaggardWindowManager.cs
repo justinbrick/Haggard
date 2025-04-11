@@ -7,8 +7,9 @@ public sealed class HaggardWindowManager : IWindowManager
 {
     private readonly ILogger<HaggardWindowManager> _logger;
     private readonly IGameEngine _gameEngine;
-    public event IWindowManager.WindowRenderEvent? Render;
     public IWindow? CurrentWindow { get; private set; }
+    public event IWindowManager.WindowRenderEvent? Render;
+    public event IWindowManager.WindowCreatedEvent? WindowCreated;
 
     public HaggardWindowManager(ILogger<HaggardWindowManager> logger, IGameEngine engine)
     {
@@ -28,6 +29,7 @@ public sealed class HaggardWindowManager : IWindowManager
         CurrentWindow.Closing += OnWindowClosing;
         CurrentWindow.Render += OnWindowRender;
         CurrentWindow.Initialize();
+        WindowCreated?.Invoke(CurrentWindow);
         CurrentWindow.ContinueEvents();
     }
 

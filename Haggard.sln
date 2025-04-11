@@ -8,6 +8,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Haggard.Engine.Client", "Ha
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Haggard.Engine.Server", "Haggard.Engine.Server\Haggard.Engine.Server.csproj", "{3294B537-3DB8-4E13-99F3-CDAC38808407}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Haggard.Engine.Samples", "Haggard.Engine.Samples\Haggard.Engine.Samples.csproj", "{2D5C61FA-2D63-4248-AA99-C4AC758AC53D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 		{3294B537-3DB8-4E13-99F3-CDAC38808407}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3294B537-3DB8-4E13-99F3-CDAC38808407}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3294B537-3DB8-4E13-99F3-CDAC38808407}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2D5C61FA-2D63-4248-AA99-C4AC758AC53D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2D5C61FA-2D63-4248-AA99-C4AC758AC53D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2D5C61FA-2D63-4248-AA99-C4AC758AC53D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2D5C61FA-2D63-4248-AA99-C4AC758AC53D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

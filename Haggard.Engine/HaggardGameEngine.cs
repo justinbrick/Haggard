@@ -11,6 +11,7 @@ public sealed class HaggardGameEngine : IGameEngine
     public event Action? Started;
     public event Action? Starting;
     public event Action? Stopping;
+    public string Name => "Haggard";
 
     public HaggardGameEngine(ILogger<HaggardGameEngine> logger)
     {

@@ -38,4 +38,5 @@ public interface IGameEngine
     /// closing. This is done after it completes the latest engine tick & render.
     /// </summary>
     void Stop();
+    string Name { get; }
 }
