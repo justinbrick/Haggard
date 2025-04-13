@@ -22,15 +22,15 @@ public sealed class HaggardWindowManager : IWindowManager
     private void OnEngineStarting()
     {
         _logger.LogTrace("Initializing window during start");
-        CurrentWindow = Window.Create(WindowOptions.DefaultVulkan with
+        new Thread(_ =>
         {
-            IsEventDriven = true
-        });
-        CurrentWindow.Closing += OnWindowClosing;
-        CurrentWindow.Render += OnWindowRender;
-        CurrentWindow.Initialize();
-        WindowCreated?.Invoke(CurrentWindow);
-        CurrentWindow.ContinueEvents();
+            CurrentWindow = Window.Create(WindowOptions.DefaultVulkan);
+            CurrentWindow.Closing += OnWindowClosing;
+            CurrentWindow.Render += OnWindowRender;
+            CurrentWindow.Initialize();
+            WindowCreated?.Invoke(CurrentWindow);    
+            CurrentWindow.Run();
+        }).Start();
     }
 
     private void OnWindowClosing()

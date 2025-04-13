@@ -7,7 +7,7 @@ public interface IGameEngine
 {
     /// <summary>
     /// A handler for when the game "ticks".
-    /// <param name="deltaTime">the amount of time in seconds that have passed since the last tick.</param>
+    /// <param name="deltaTime">the amount of time in milliseconds that have passed since the last tick.</param>
     /// </summary>
     delegate void EngineTickEvent(float deltaTime);
     /// <summary>

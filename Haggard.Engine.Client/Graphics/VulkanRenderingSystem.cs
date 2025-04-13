@@ -30,7 +30,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         
         _vulkan = Vk.GetApi();
         
-        var appInfo = new ApplicationInfo()
+        var appInfo = new ApplicationInfo
         {
             SType = StructureType.ApplicationInfo,
             PApplicationName = (byte*)Marshal.StringToHGlobalAnsi("Application Name"),
@@ -40,7 +40,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
             ApiVersion = Vk.Version12
         };
 
-        var createInfo = new InstanceCreateInfo()
+        var createInfo = new InstanceCreateInfo
         {
             SType = StructureType.InstanceCreateInfo,
             PApplicationInfo = &appInfo,

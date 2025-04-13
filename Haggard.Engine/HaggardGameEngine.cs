@@ -1,11 +1,18 @@
-﻿using System.Numerics;
+﻿using System.Diagnostics;
+using System.Numerics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Haggard.Engine;
 
 public sealed class HaggardGameEngine : IGameEngine
 {
     private readonly ILogger<HaggardGameEngine> _logger;
+
+    private readonly HaggardGameEngineOptions _options = new HaggardGameEngineOptions
+    {
+        TickRate = 60
+    };
     private CancellationToken _cancellationToken;
     public event IGameEngine.EngineTickEvent? Tick;
     public event Action? Started;
@@ -25,11 +32,19 @@ public sealed class HaggardGameEngine : IGameEngine
         Starting?.Invoke(); 
         _logger.LogInformation("Started engine");
         Started?.Invoke();
+        var tickWait = TimeSpan.TicksPerSecond / _options.TickRate;
+        var tickWatch = new Stopwatch();
         while (!_cancellationToken.IsCancellationRequested)
         {
-            Tick?.Invoke(10);
+            var elapsed = tickWatch.ElapsedTicks;
+            if (elapsed < tickWait) 
+                new ManualResetEvent(false).WaitOne((int)((tickWait-elapsed)/TimeSpan.TicksPerMillisecond));
+
+            var newTick = (float)tickWatch.ElapsedTicks/TimeSpan.TicksPerMillisecond;
+            tickWatch.Restart();
+            Tick?.Invoke(newTick);
         }
-        
+    
         _logger.LogInformation("Stopping engine");
         Stopping?.Invoke();
     }
