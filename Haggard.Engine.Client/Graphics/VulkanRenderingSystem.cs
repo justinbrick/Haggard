@@ -23,6 +23,8 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     private VulkanRenderingSystemOptions _options = new();
     private Vk? _vulkan;
     private Instance _instance;
+    private ExtDebugUtils? _debugUtils;
+    private DebugUtilsMessengerEXT _debugMessenger;
 
     public VulkanRenderingSystem(ILogger<VulkanRenderingSystem> logger, IGameEngine gameEngine, IWindowManager windowManager)
     {
@@ -34,6 +36,49 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
 
     private void OnWindowCreated(IWindow window)
     { 
+
+        window.Closing += OnWindowClosing;
+        InitializeVulkan(window);
+        InitializeDebugger();
+    }
+
+    private void OnWindowClosing()
+    {
+        if (_windowManager.CurrentWindow is not { } window)
+            return;
+        
+        DisposeDebugger();
+    }
+
+    private DebugUtilsMessengerCreateInfoEXT CreateDebuggerInfo()
+    {
+        return new DebugUtilsMessengerCreateInfoEXT
+        {
+            SType = StructureType.DebugUtilsMessengerCreateInfoExt,
+            MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.InfoBitExt |
+                              DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt |
+                              DebugUtilsMessageSeverityFlagsEXT.WarningBitExt,
+            MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt |
+                          DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt |
+                          DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
+            PfnUserCallback = (PfnDebugUtilsMessengerCallbackEXT)OnValidationDebug
+        };
+    }
+
+    private IntPtr GetRequiredExtensions(IVkSurface surface, out uint extensionCount)
+    {
+        var extensions = surface.GetRequiredExtensions(out extensionCount);
+        var managedExtensions = SilkMarshal.PtrToStringArray((nint)extensions, (int)extensionCount);
+        if (_options.EnableValidationLayers)
+            managedExtensions = [..managedExtensions, ExtDebugUtils.ExtensionName];
+        
+        ++extensionCount;
+
+        return SilkMarshal.StringArrayToPtr(managedExtensions);
+    }
+
+    private void InitializeVulkan(IWindow window)
+    {
         if (window.VkSurface is null)
             throw new Exception("IWindow.VkSurface is null");
         
@@ -50,7 +95,6 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
             EngineVersion = new Version32(1, 0, 0),
             ApiVersion = Vk.Version12
         };
-        
 
         var createInfo = new InstanceCreateInfo
         {
@@ -61,23 +105,49 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         var extensions = GetRequiredExtensions(window.VkSurface, out var extensionCount);
         createInfo.EnabledExtensionCount = extensionCount;
         createInfo.PpEnabledExtensionNames = (byte**)extensions;
-        createInfo.EnabledLayerCount = 0;
+        
+        if (_options.EnableValidationLayers)
+        {
+            createInfo.EnabledLayerCount = (uint)ValidationLayers.Length;
+            createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(ValidationLayers);
+            var debuggerInfo = CreateDebuggerInfo();
+            createInfo.PNext = &debuggerInfo;
+        }
 
         if (_vulkan.CreateInstance(in createInfo, null, out _instance) != Result.Success)
             throw new Exception("Failed to create Vulkan instance");
         
         Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);
         Marshal.FreeHGlobal((IntPtr)appInfo.PApplicationName);
+        SilkMarshal.Free(extensions);
+        
+        if (_options.EnableValidationLayers)
+            SilkMarshal.Free((IntPtr)createInfo.PpEnabledLayerNames);
     }
 
-    private IntPtr GetRequiredExtensions(IVkSurface surface, out uint extensionCount)
+    private void InitializeDebugger()
     {
-        var extensions = surface.GetRequiredExtensions(out extensionCount);
-        var managedExtensions = SilkMarshal.PtrToStringArray((nint)extensions, (int)extensionCount);
-        if (_options.EnableValidationLayers)
-            managedExtensions = [..managedExtensions, ExtDebugUtils.ExtensionName];
+        if (_vulkan is null || !_options.EnableValidationLayers)
+            return;
 
-        return SilkMarshal.StringArrayToPtr(managedExtensions);
+        if (!_vulkan.TryGetInstanceExtension(_instance, out ExtDebugUtils debugUtils))
+            return;
+        
+        _debugUtils = debugUtils;
+        
+        var debuggerInfo = CreateDebuggerInfo();
+        if (_debugUtils.CreateDebugUtilsMessenger(_instance, in debuggerInfo, null, out _debugMessenger) != Result.Success)
+        {
+            throw new Exception("Could not create debugger from validation layers!");
+        }
+    }
+
+    private void DisposeDebugger()
+    {
+        if (_vulkan is null || !_options.EnableValidationLayers || _debugUtils is null)
+            return;
+        
+        _debugUtils.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
     }
 
     private bool CanSupportValidationLayers()
@@ -96,9 +166,6 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
             .ToHashSet();
 
         return ValidationLayers.All(layerNames.Contains);
-    }
-    private void ConfigureValidationLayers()
-    {
     }
 
     private uint OnValidationDebug(
