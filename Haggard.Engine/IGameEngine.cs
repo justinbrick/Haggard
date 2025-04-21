@@ -1,9 +1,11 @@
-﻿namespace Haggard.Engine;
+﻿using Microsoft.Extensions.Hosting;
+
+namespace Haggard.Engine;
 
 /// <summary>
 /// A game engine is used to initialize and create the code necessary for the first startup procedures.
 /// </summary>
-public interface IGameEngine
+public interface IGameEngine : IHostedService
 {
     /// <summary>
     /// A handler for when the game "ticks".
@@ -26,17 +28,5 @@ public interface IGameEngine
     /// Called when the game engine is stopping.
     /// </summary>
     event Action Stopping;
-    /// <summary>
-    /// Starts the game in an asynchronous manner.
-    /// </summary>
-    /// <param name="cancellationToken">a cancellation token to use for a more graceful shutdown of the engine</param>
-    /// <returns></returns>
-    void Start(CancellationToken cancellationToken = default);
-    /// <summary>
-    /// Signals to the engine to stop running.
-    /// This will not immediately stop, as the engine will first try to gracefully signal a stopping event before
-    /// closing. This is done after it completes the latest engine tick & render.
-    /// </summary>
-    void Stop();
     string Name { get; }
 }

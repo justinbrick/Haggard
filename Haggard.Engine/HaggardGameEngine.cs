@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Numerics;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -25,7 +26,13 @@ public sealed class HaggardGameEngine : IGameEngine
         _logger = logger;
     }
 
-    public void Start(CancellationToken cancellationToken)
+    public void Stop()
+    {
+        _logger.LogInformation("Forcing engine to stop");
+        _cancellationToken = new CancellationToken(true);
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         _cancellationToken = cancellationToken;
         _logger.LogInformation("Starting engine");
@@ -47,11 +54,15 @@ public sealed class HaggardGameEngine : IGameEngine
     
         _logger.LogInformation("Stopping engine");
         Stopping?.Invoke();
+        
+        return Task.CompletedTask;
     }
 
-    public void Stop()
+    public Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Forcing engine to stop");
-        _cancellationToken = new CancellationToken(true);
+        _cancellationToken = cancellationToken;
+        // TODO: Research this impl. Right now, there's a timespan, but this could be a "graceful shutdown" period.
+        // In which case, we need to make that configurable.
+        return Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
     }
 }

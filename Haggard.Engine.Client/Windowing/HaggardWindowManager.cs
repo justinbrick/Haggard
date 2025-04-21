@@ -37,7 +37,7 @@ public sealed class HaggardWindowManager : IWindowManager
     {
         _logger.LogTrace("Window closed, stopping engine");
         _gameEngine.Stopping -= OnEngineStopping;  
-        _gameEngine.Stop();
+        _gameEngine.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
     private void OnEngineStopping()
