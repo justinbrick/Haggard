@@ -7,14 +7,17 @@ public sealed class HaggardWindowManager : IWindowManager
 {
     private readonly ILogger<HaggardWindowManager> _logger;
     private readonly IGameEngine _gameEngine;
-    public IWindow? CurrentWindow { get; private set; }
+    public IWindow CurrentWindow { get; private set; }
     public event IWindowManager.WindowRenderEvent? Render;
-    public event IWindowManager.WindowCreatedEvent? WindowCreated;
 
     public HaggardWindowManager(ILogger<HaggardWindowManager> logger, IGameEngine engine)
     {
         _logger = logger;
         _gameEngine = engine;
+        CurrentWindow = Window.Create(WindowOptions.DefaultVulkan);
+        CurrentWindow.Closing += OnWindowClosing;
+        CurrentWindow.Render += OnWindowRender;
+        CurrentWindow.Initialize();
         engine.Starting += OnEngineStarting;
         engine.Stopping += OnEngineStopping;
     }
@@ -24,11 +27,6 @@ public sealed class HaggardWindowManager : IWindowManager
         _logger.LogTrace("Initializing window during start");
         new Thread(_ =>
         {
-            CurrentWindow = Window.Create(WindowOptions.DefaultVulkan);
-            CurrentWindow.Closing += OnWindowClosing;
-            CurrentWindow.Render += OnWindowRender;
-            CurrentWindow.Initialize();
-            WindowCreated?.Invoke(CurrentWindow);    
             CurrentWindow.Run();
         }).Start();
     }
