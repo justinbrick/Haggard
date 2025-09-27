@@ -1,4 +1,5 @@
 ﻿using System.Runtime.InteropServices;
+using Haggard.Engine.Client.Graphics.Devices;
 using Haggard.Engine.Client.Windowing;
 using Microsoft.Extensions.Logging;
 using Silk.NET.Core;
@@ -6,10 +7,9 @@ using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.EXT;
-using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Windowing;
 
-namespace Haggard.Engine.Client.Graphics;
+namespace Haggard.Engine.Client.Graphics.Vulkan;
 
 /// <summary>
 /// A rendering system implementation using Vulkan.
@@ -21,6 +21,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     private readonly IGameEngine _gameEngine;
     private VulkanRenderingSystemOptions _options = new();
     public readonly Vk Vulkan = Vk.GetApi();
+    public IDeviceManager DeviceManager { get; } = new VulkanDeviceManager();
     private Instance _instance;
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;

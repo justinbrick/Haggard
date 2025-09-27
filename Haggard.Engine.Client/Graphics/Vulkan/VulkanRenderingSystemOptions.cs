@@ -1,4 +1,4 @@
-﻿namespace Haggard.Engine.Client.Graphics;
+﻿namespace Haggard.Engine.Client.Graphics.Vulkan;
 
 public sealed class VulkanRenderingSystemOptions
 {
