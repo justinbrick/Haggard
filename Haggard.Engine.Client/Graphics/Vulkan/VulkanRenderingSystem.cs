@@ -19,15 +19,16 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     private static readonly string[] ValidationLayers = ["VK_LAYER_KHRONOS_validation"];
     private readonly ILogger<VulkanRenderingSystem> _logger;
     private readonly IGameEngine _gameEngine;
-    private VulkanRenderingSystemOptions _options = new();
+    private readonly VulkanRenderingSystemOptions _options = new();
     public readonly Vk Vulkan = Vk.GetApi();
-    public IDeviceManager DeviceManager { get; } = new VulkanDeviceManager();
-    private Instance _instance;
+    internal Instance Instance;
+    public IDeviceManager DeviceManager { get;  }
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
 
     public VulkanRenderingSystem(ILogger<VulkanRenderingSystem> logger, IGameEngine gameEngine, IWindowManager windowManager)
     {
+        DeviceManager = new VulkanDeviceManager(this);
         _logger = logger;
         _gameEngine = gameEngine;
         var window = windowManager.CurrentWindow;
@@ -107,7 +108,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
             createInfo.PNext = &debuggerInfo;
         }
 
-        if (Vulkan.CreateInstance(in createInfo, null, out _instance) != Result.Success)
+        if (Vulkan.CreateInstance(in createInfo, null, out Instance) != Result.Success)
             throw new Exception("Failed to create Vulkan instance");
         
         Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);
@@ -120,13 +121,13 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
 
     private void InitializeDebugger()
     {
-        if (!Vulkan.TryGetInstanceExtension(_instance, out ExtDebugUtils debugUtils))
+        if (!Vulkan.TryGetInstanceExtension(Instance, out ExtDebugUtils debugUtils))
             return;
         
         _debugUtils = debugUtils;
         
         var debuggerInfo = CreateDebuggerInfo();
-        if (_debugUtils.CreateDebugUtilsMessenger(_instance, in debuggerInfo, null, out _debugMessenger) != Result.Success)
+        if (_debugUtils.CreateDebugUtilsMessenger(Instance, in debuggerInfo, null, out _debugMessenger) != Result.Success)
         {
             throw new Exception("Could not create debugger from validation layers!");
         }
@@ -137,7 +138,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         if (!_options.EnableValidationLayers || _debugUtils is null)
             return;
         
-        _debugUtils.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
+        _debugUtils.DestroyDebugUtilsMessenger(Instance, _debugMessenger, null);
     }
 
     private bool CanSupportValidationLayers()
