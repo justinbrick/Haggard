@@ -1,14 +1,18 @@
 ﻿using Haggard.Engine;
+using Haggard.Engine.Client.Graphics;
 using Haggard.Engine.Client.Graphics.Vulkan;
 using Haggard.Engine.Client.Windowing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 
-var gameEngine = new HaggardGameEngine(NullLogger<HaggardGameEngine>.Instance);
-var windowing = new HaggardWindowManager(NullLogger<HaggardWindowManager>.Instance, gameEngine);
-var rendering = new VulkanRenderingSystem(
-    NullLogger<VulkanRenderingSystem>.Instance,
-    gameEngine,
-    windowing
-);
+var builder = Host.CreateApplicationBuilder();
+builder
+    .Services.AddSingleton<IGameEngine, HaggardGameEngine>()
+    .AddSingleton<IWindowManager, HaggardWindowManager>()
+    .AddSingleton<IRenderingSystem, VulkanRenderingSystem>();
 
-await gameEngine.StartAsync(CancellationToken.None);
+var host = builder.Build();
+
+host.Services.GetRequiredService<IRenderingSystem>();
+await host.Services.GetRequiredService<IGameEngine>().StartAsync(CancellationToken.None);
