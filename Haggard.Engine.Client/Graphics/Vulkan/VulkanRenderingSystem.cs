@@ -20,15 +20,20 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     private readonly ILogger<VulkanRenderingSystem> _logger;
     private readonly IGameEngine _gameEngine;
     private readonly VulkanRenderingSystemOptions _options = new();
+    private readonly VulkanDeviceManager _vulkanDeviceManager;
     public readonly Vk Vulkan = Vk.GetApi();
     internal Instance Instance;
-    public IDeviceManager DeviceManager { get;  }
+    public IDeviceManager DeviceManager => _vulkanDeviceManager;
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
 
-    public VulkanRenderingSystem(ILogger<VulkanRenderingSystem> logger, IGameEngine gameEngine, IWindowManager windowManager)
+    public VulkanRenderingSystem(
+        ILogger<VulkanRenderingSystem> logger,
+        IGameEngine gameEngine,
+        IWindowManager windowManager
+    )
     {
-        DeviceManager = new VulkanDeviceManager(this);
+        _vulkanDeviceManager = new VulkanDeviceManager(this);
         _logger = logger;
         _gameEngine = gameEngine;
         var window = windowManager.CurrentWindow;
@@ -40,6 +45,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
             InitializeDebugger();
         }
     }
+
     private void OnWindowClosing()
     {
         DisposeDebugger();
@@ -50,13 +56,15 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         return new DebugUtilsMessengerCreateInfoEXT
         {
             SType = StructureType.DebugUtilsMessengerCreateInfoExt,
-            MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.InfoBitExt |
-                              DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt |
-                              DebugUtilsMessageSeverityFlagsEXT.WarningBitExt,
-            MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt |
-                          DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt |
-                          DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
-            PfnUserCallback = (PfnDebugUtilsMessengerCallbackEXT)OnValidationDebug
+            MessageSeverity =
+                DebugUtilsMessageSeverityFlagsEXT.InfoBitExt
+                | DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt
+                | DebugUtilsMessageSeverityFlagsEXT.WarningBitExt,
+            MessageType =
+                DebugUtilsMessageTypeFlagsEXT.GeneralBitExt
+                | DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt
+                | DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
+            PfnUserCallback = (PfnDebugUtilsMessengerCallbackEXT)OnValidationDebug,
         };
     }
 
@@ -66,7 +74,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         var managedExtensions = SilkMarshal.PtrToStringArray((nint)extensions, (int)extensionCount);
         if (_options.EnableValidationLayers)
         {
-            managedExtensions = [..managedExtensions, ExtDebugUtils.ExtensionName];
+            managedExtensions = [.. managedExtensions, ExtDebugUtils.ExtensionName];
         }
 
         return managedExtensions;
@@ -76,10 +84,13 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     {
         if (window.VkSurface is null)
             throw new Exception("IWindow.VkSurface is null");
-        
+
         if (_options.EnableValidationLayers && !CanSupportValidationLayers())
-            throw new Exception("Vulkan cannot support validation layers");
-        
+            throw new Exception("Validation layers are not installed, or unsupported.")
+            {
+                HelpLink = "https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Validation_layers",
+            };
+
         var appInfo = new ApplicationInfo
         {
             SType = StructureType.ApplicationInfo,
@@ -87,7 +98,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
             ApplicationVersion = new Version32(1, 0, 0),
             PEngineName = (byte*)Marshal.StringToHGlobalAnsi(_gameEngine.Name),
             EngineVersion = new Version32(1, 0, 0),
-            ApiVersion = Vk.Version12
+            ApiVersion = Vk.Version12,
         };
 
         var createInfo = new InstanceCreateInfo
@@ -99,7 +110,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         var extensions = GetRequiredExtensions(window.VkSurface);
         createInfo.EnabledExtensionCount = (uint)extensions.Length;
         createInfo.PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions);
-        
+
         if (_options.EnableValidationLayers)
         {
             createInfo.EnabledLayerCount = (uint)ValidationLayers.Length;
@@ -110,11 +121,11 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
 
         if (Vulkan.CreateInstance(in createInfo, null, out Instance) != Result.Success)
             throw new Exception("Failed to create Vulkan instance");
-        
+
         Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);
         Marshal.FreeHGlobal((IntPtr)appInfo.PApplicationName);
         SilkMarshal.Free((IntPtr)createInfo.PpEnabledExtensionNames);
-        
+
         if (_options.EnableValidationLayers)
             SilkMarshal.Free((IntPtr)createInfo.PpEnabledLayerNames);
     }
@@ -123,11 +134,18 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     {
         if (!Vulkan.TryGetInstanceExtension(Instance, out ExtDebugUtils debugUtils))
             return;
-        
+
         _debugUtils = debugUtils;
-        
+
         var debuggerInfo = CreateDebuggerInfo();
-        if (_debugUtils.CreateDebugUtilsMessenger(Instance, in debuggerInfo, null, out _debugMessenger) != Result.Success)
+        if (
+            _debugUtils.CreateDebugUtilsMessenger(
+                Instance,
+                in debuggerInfo,
+                null,
+                out _debugMessenger
+            ) != Result.Success
+        )
         {
             throw new Exception("Could not create debugger from validation layers!");
         }
@@ -137,7 +155,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     {
         if (!_options.EnableValidationLayers || _debugUtils is null)
             return;
-        
+
         _debugUtils.DestroyDebugUtilsMessenger(Instance, _debugMessenger, null);
     }
 
@@ -145,7 +163,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     {
         uint layerCount = 0;
         Vulkan.EnumerateInstanceLayerProperties(ref layerCount, null);
-        
+
         var layerProperties = new LayerProperties[layerCount];
         fixed (LayerProperties* pLayerProperties = layerProperties)
             Vulkan.EnumerateInstanceLayerProperties(ref layerCount, pLayerProperties);
@@ -158,9 +176,9 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     }
 
     private uint OnValidationDebug(
-        DebugUtilsMessageSeverityFlagsEXT severity, 
+        DebugUtilsMessageSeverityFlagsEXT severity,
         DebugUtilsMessageTypeFlagsEXT type,
-        DebugUtilsMessengerCallbackDataEXT* callbackData, 
+        DebugUtilsMessengerCallbackDataEXT* callbackData,
         void* userData
     )
     {
@@ -171,12 +189,12 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
             DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt => LogLevel.Error,
             DebugUtilsMessageSeverityFlagsEXT.None => LogLevel.Information,
             DebugUtilsMessageSeverityFlagsEXT.InfoBitExt => LogLevel.Information,
-            _ => throw new ArgumentOutOfRangeException(nameof(severity), severity, null)
+            _ => throw new ArgumentOutOfRangeException(nameof(severity), severity, null),
         };
         var message = Marshal.PtrToStringAnsi((nint)callbackData->PMessage);
-        
+
         _logger.Log(logLevel, "Vk ValidationLayer ({Message.Type}): {Message}", type, message);
-        
+
         return Vk.False;
     }
 }
