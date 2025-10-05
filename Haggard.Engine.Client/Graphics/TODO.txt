@@ -1,0 +1,8 @@
+Planned implementation:
+Right now, focus is on getting a working rendering system implementation.
+If done correctly, rendering should be system-based, meaning that models and whatever else don't really matter -
+those are implementation specific. But, it is desired in the future that the interfaces for rendering are all
+alike, so that people can contribute new rendering engines in the future.
+
+For reference, Unreal Engine's RHI implementation should be considered a baseline, but without any of the
+tech debt that they introduce via C++ and other bad implementations that they have.
