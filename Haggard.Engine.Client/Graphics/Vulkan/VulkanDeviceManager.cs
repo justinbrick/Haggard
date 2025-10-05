@@ -7,13 +7,15 @@ namespace Haggard.Engine.Client.Graphics.Vulkan;
 
 public sealed class VulkanDeviceManager(VulkanRenderingSystem renderingSystem) : IDeviceManager
 {
+    public event Action<PhysicalDevice, PhysicalDeviceProperties2>? OnDeviceSelected;
+
     /// <summary>
     /// Enumerates a list of physical devices, with their properties, from the Vulkan API.
     /// </summary>
     /// <returns>an enumeration with a tuple of the device handle, and the properties of the device</returns>
     public unsafe IEnumerable<(PhysicalDevice, PhysicalDeviceProperties2)> GetPhysicalDevices()
     {
-        uint deviceCount;
+        uint deviceCount = 0;
         renderingSystem.Vulkan.EnumeratePhysicalDevices(
             renderingSystem.Instance,
             &deviceCount,
@@ -31,8 +33,14 @@ public sealed class VulkanDeviceManager(VulkanRenderingSystem renderingSystem) :
         }
 
         return physicalDevices.Select(d =>
-            (d, renderingSystem.Vulkan.GetPhysicalDeviceProperties2(d))
-        );
+        {
+            var deviceProperties = new PhysicalDeviceProperties2
+            {
+                SType = StructureType.PhysicalDeviceProperties2,
+            };
+            renderingSystem.Vulkan.GetPhysicalDeviceProperties2(d, &deviceProperties);
+            return (d, deviceProperties);
+        });
     }
 
     public IEnumerable<RenderingDevice> GetDevices()
@@ -58,7 +66,7 @@ public sealed class VulkanDeviceManager(VulkanRenderingSystem renderingSystem) :
             });
     }
 
-    public bool TrySelectDevice(RenderingDevice device)
+    public (PhysicalDevice, PhysicalDeviceProperties2)? GetPhysicalDevice(RenderingDevice device)
     {
         var physicalDevices = GetPhysicalDevices();
         if (device.Id is not null)
@@ -83,7 +91,7 @@ public sealed class VulkanDeviceManager(VulkanRenderingSystem renderingSystem) :
             // If all else fails, attempt to look for a vendor ID based off of the vendor string.
             if (!uint.TryParse(device.Vendor, out var vendorId))
             {
-                return false;
+                return null;
             }
             physicalDevices = physicalDevices.Where(d => d.Item2.Properties.VendorID == vendorId);
         }
@@ -91,10 +99,21 @@ public sealed class VulkanDeviceManager(VulkanRenderingSystem renderingSystem) :
         var deviceInfo = physicalDevices.FirstOrDefault();
         if (deviceInfo.Item1.Handle == IntPtr.Zero)
         {
+            return null;
+        }
+
+        return deviceInfo;
+    }
+
+    public bool TrySelectDevice(RenderingDevice device)
+    {
+        var selected = GetPhysicalDevice(device);
+        if (selected is not { } selectedDevice)
+        {
             return false;
         }
 
-        throw new NotImplementedException();
+        OnDeviceSelected?.Invoke(selectedDevice.Item1, selectedDevice.Item2);
 
         return true;
     }

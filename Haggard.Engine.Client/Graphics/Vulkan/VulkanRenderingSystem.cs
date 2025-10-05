@@ -14,7 +14,7 @@ namespace Haggard.Engine.Client.Graphics.Vulkan;
 /// <summary>
 /// A rendering system implementation using Vulkan.
 /// </summary>
-public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
+public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
 {
     private static readonly string[] ValidationLayers = ["VK_LAYER_KHRONOS_validation"];
     private readonly ILogger<VulkanRenderingSystem> _logger;
@@ -26,6 +26,8 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     public IDeviceManager DeviceManager => _vulkanDeviceManager;
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
+    private Device _device;
+    private Queue _graphicsQueue;
 
     public VulkanRenderingSystem(
         ILogger<VulkanRenderingSystem> logger,
@@ -34,6 +36,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
     )
     {
         _vulkanDeviceManager = new VulkanDeviceManager(this);
+        _vulkanDeviceManager.OnDeviceSelected += OnDeviceSelected;
         _logger = logger;
         _gameEngine = gameEngine;
         var window = windowManager.CurrentWindow;
@@ -44,12 +47,40 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         {
             InitializeDebugger();
         }
+        InitializeDevice();
     }
 
     private void OnWindowClosing()
     {
         DisposeDebugger();
     }
+
+    private uint? GetGraphicsFamily(in PhysicalDevice physicalDevice)
+    {
+        uint familySize;
+        Vulkan.GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &familySize, null);
+        var familyProperties = new QueueFamilyProperties2[familySize];
+        fixed (QueueFamilyProperties2* pFamilyProperties = familyProperties)
+            Vulkan.GetPhysicalDeviceQueueFamilyProperties2(
+                physicalDevice,
+                &familySize,
+                pFamilyProperties
+            );
+
+        for (uint i = 0; i < familyProperties.Length; i++)
+        {
+            var properties = familyProperties[i];
+            if (properties.QueueFamilyProperties.QueueFlags.HasFlag(QueueFlags.GraphicsBit))
+                return i;
+        }
+
+        return null;
+    }
+
+    private void OnDeviceSelected(
+        PhysicalDevice physicalDevice,
+        PhysicalDeviceProperties2 physicalDeviceProperties
+    ) { }
 
     private DebugUtilsMessengerCreateInfoEXT CreateDebuggerInfo()
     {
@@ -151,6 +182,49 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         }
     }
 
+    private void InitializeDevice()
+    {
+        var maybeDevice = _vulkanDeviceManager.GetPhysicalDevice(
+            _vulkanDeviceManager.GetDevices().First()
+        );
+
+        if (maybeDevice is not { } deviceTuple)
+            throw new Exception("Could not get device!");
+
+        var device = deviceTuple.Item1;
+        if (GetGraphicsFamily(device) is not { } graphicsIndex)
+            throw new Exception("Could not get graphics family!");
+
+        var queuePriority = 1f;
+        var queueCreateInfo = new DeviceQueueCreateInfo
+        {
+            SType = StructureType.DeviceQueueCreateInfo,
+            QueueFamilyIndex = graphicsIndex,
+            QueueCount = 1,
+            PQueuePriorities = &queuePriority,
+        };
+        var createInfo = new DeviceCreateInfo
+        {
+            SType = StructureType.DeviceCreateInfo,
+            EnabledExtensionCount = 0,
+            EnabledLayerCount = 0,
+            PpEnabledExtensionNames = null,
+            PpEnabledLayerNames = null,
+            PQueueCreateInfos = &queueCreateInfo,
+            QueueCreateInfoCount = 1,
+        };
+
+        fixed (Device* pDevice = &_device)
+        {
+            if (Vulkan.CreateDevice(device, &createInfo, null, pDevice) != Result.Success)
+            {
+                throw new Exception("Failed to create logical device!");
+            }
+        }
+
+        Vulkan.GetDeviceQueue(_device, graphicsIndex, 0, out _graphicsQueue);
+    }
+
     private void DisposeDebugger()
     {
         if (!_options.EnableValidationLayers || _debugUtils is null)
@@ -196,5 +270,11 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem
         _logger.Log(logLevel, "Vk ValidationLayer ({Message.Type}): {Message}", type, message);
 
         return Vk.False;
+    }
+
+    public void Dispose()
+    {
+        Vulkan.DestroyDevice(_device, null);
+        Vulkan.DestroyInstance(Instance, null);
     }
 }
