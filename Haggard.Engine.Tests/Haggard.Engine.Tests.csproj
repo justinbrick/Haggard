@@ -25,4 +25,8 @@
       <ProjectReference Include="..\Haggard.Engine\Haggard.Engine.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="Client\" />
+    </ItemGroup>
+
 </Project>

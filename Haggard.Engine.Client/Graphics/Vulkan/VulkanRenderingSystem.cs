@@ -7,6 +7,7 @@ using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.EXT;
+using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Windowing;
 
 namespace Haggard.Engine.Client.Graphics.Vulkan;
@@ -21,6 +22,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     private readonly IGameEngine _gameEngine;
     private readonly VulkanRenderingSystemOptions _options = new();
     private readonly VulkanDeviceManager _vulkanDeviceManager;
+    private readonly IWindowManager _windowManager;
     public readonly Vk Vulkan = Vk.GetApi();
     internal Instance Instance;
     public IDeviceManager DeviceManager => _vulkanDeviceManager;
@@ -28,6 +30,9 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     private DebugUtilsMessengerEXT _debugMessenger;
     private Device _device;
     private Queue _graphicsQueue;
+    private Queue _presentQueue;
+    private KhrSurface _khrSurface = null!;
+    private SurfaceKHR _surface;
 
     public VulkanRenderingSystem(
         ILogger<VulkanRenderingSystem> logger,
@@ -39,24 +44,48 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         _vulkanDeviceManager.OnDeviceSelected += OnDeviceSelected;
         _logger = logger;
         _gameEngine = gameEngine;
-        var window = windowManager.CurrentWindow;
-        window.Closing += OnWindowClosing;
+        _windowManager = windowManager;
+        windowManager.CurrentWindow.Closing += OnWindowClosing;
 
-        InitializeVulkan(window);
-        if (_options.EnableValidationLayers)
-        {
-            InitializeDebugger();
-        }
+        InitializeVulkan();
+        InitializeDebugger();
         InitializeDevice();
     }
 
-    private void OnWindowClosing()
+    private void OnWindowClosing() { }
+
+    private sealed class Families
     {
-        DisposeDebugger();
+        /// <summary>
+        /// The index of a queue that is supporting graphics.
+        /// </summary>
+        public uint? Graphics;
+
+        /// <summary>
+        /// The index of a queue in the presentation family.
+        /// </summary>
+        public uint? Presentation;
+
+        public HashSet<uint> ToSet()
+        {
+            var set = new HashSet<uint>();
+            if (Graphics != null)
+            {
+                set.Add(Graphics.Value);
+            }
+
+            if (Presentation != null)
+            {
+                set.Add(Presentation.Value);
+            }
+
+            return set;
+        }
     }
 
-    private uint? GetGraphicsFamily(in PhysicalDevice physicalDevice)
+    private Families GetQueueFamilies(in PhysicalDevice physicalDevice)
     {
+        var family = new Families();
         uint familySize;
         Vulkan.GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &familySize, null);
         var familyProperties = new QueueFamilyProperties2[familySize];
@@ -70,11 +99,22 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         for (uint i = 0; i < familyProperties.Length; i++)
         {
             var properties = familyProperties[i];
-            if (properties.QueueFamilyProperties.QueueFlags.HasFlag(QueueFlags.GraphicsBit))
-                return i;
+            var flags = properties.QueueFamilyProperties.QueueFlags;
+            if (flags.HasFlag(QueueFlags.GraphicsBit))
+                family.Graphics = i;
+            _khrSurface.GetPhysicalDeviceSurfaceSupport(
+                physicalDevice,
+                i,
+                _surface,
+                out var supported
+            );
+            if (supported)
+            {
+                family.Presentation = i;
+            }
         }
 
-        return null;
+        return family;
     }
 
     private void OnDeviceSelected(
@@ -99,28 +139,19 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         };
     }
 
-    private string[] GetRequiredExtensions(IVkSurface surface)
+    private void InitializeVulkan()
     {
-        var extensions = surface.GetRequiredExtensions(out var extensionCount);
-        var managedExtensions = SilkMarshal.PtrToStringArray((nint)extensions, (int)extensionCount);
-        if (_options.EnableValidationLayers)
-        {
-            managedExtensions = [.. managedExtensions, ExtDebugUtils.ExtensionName];
-        }
-
-        return managedExtensions;
-    }
-
-    private void InitializeVulkan(IWindow window)
-    {
-        if (window.VkSurface is null)
+        if (_windowManager.CurrentWindow.VkSurface is null)
             throw new Exception("IWindow.VkSurface is null");
 
-        if (_options.EnableValidationLayers && !CanSupportValidationLayers())
-            throw new Exception("Validation layers are not installed, or unsupported.")
-            {
-                HelpLink = "https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Validation_layers",
-            };
+        if (!Vulkan.TryGetInstanceExtension(Instance, out _khrSurface))
+        {
+            throw new Exception("Failed to get KhrSurface.");
+        }
+
+        _surface = _windowManager
+            .CurrentWindow.VkSurface.Create<AllocationCallbacks>(Instance.ToHandle(), null)
+            .ToSurface();
 
         var appInfo = new ApplicationInfo
         {
@@ -138,9 +169,11 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             PApplicationInfo = &appInfo,
         };
 
-        var extensions = GetRequiredExtensions(window.VkSurface);
-        createInfo.EnabledExtensionCount = (uint)extensions.Length;
-        createInfo.PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions);
+        var extensions = _windowManager.CurrentWindow.VkSurface.GetRequiredExtensions(
+            out var extensionCount
+        );
+        createInfo.EnabledExtensionCount = extensionCount;
+        createInfo.PpEnabledExtensionNames = extensions;
 
         if (_options.EnableValidationLayers)
         {
@@ -163,8 +196,13 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
 
     private void InitializeDebugger()
     {
-        if (!Vulkan.TryGetInstanceExtension(Instance, out ExtDebugUtils debugUtils))
+        if (!_options.EnableValidationLayers)
             return;
+
+        if (!Vulkan.TryGetInstanceExtension<ExtDebugUtils>(Instance, out var debugUtils))
+            throw new Exception(
+                "Could not get debug layers, but enable validation layers is enabled. Are they installed?"
+            );
 
         _debugUtils = debugUtils;
 
@@ -192,61 +230,52 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             throw new Exception("Could not get device!");
 
         var device = deviceTuple.Item1;
-        if (GetGraphicsFamily(device) is not { } graphicsIndex)
-            throw new Exception("Could not get graphics family!");
+        if (
+            GetQueueFamilies(device)
+            is not { Graphics: { } graphics, Presentation: { } present } families
+        )
+            throw new Exception("Could not get graphics or queue family!");
 
         var queuePriority = 1f;
-        var queueCreateInfo = new DeviceQueueCreateInfo
-        {
-            SType = StructureType.DeviceQueueCreateInfo,
-            QueueFamilyIndex = graphicsIndex,
-            QueueCount = 1,
-            PQueuePriorities = &queuePriority,
-        };
-        var createInfo = new DeviceCreateInfo
-        {
-            SType = StructureType.DeviceCreateInfo,
-            EnabledExtensionCount = 0,
-            EnabledLayerCount = 0,
-            PpEnabledExtensionNames = null,
-            PpEnabledLayerNames = null,
-            PQueueCreateInfos = &queueCreateInfo,
-            QueueCreateInfoCount = 1,
-        };
-
-        fixed (Device* pDevice = &_device)
-        {
-            if (Vulkan.CreateDevice(device, &createInfo, null, pDevice) != Result.Success)
+        var queueCreateInfos = families
+            .ToSet()
+            .Select(static i => new DeviceQueueCreateInfo
             {
-                throw new Exception("Failed to create logical device!");
+                SType = StructureType.DeviceQueueCreateInfo,
+                QueueFamilyIndex = 1,
+                QueueCount = 1,
+                PQueuePriorities = null,
+            })
+            .ToArray();
+
+        for (var i = 0; i < queueCreateInfos.Length; i++)
+        {
+            queueCreateInfos[i].PQueuePriorities = &queuePriority;
+        }
+
+        fixed (DeviceQueueCreateInfo* pQueueCreateInfos = queueCreateInfos)
+        {
+            var createInfo = new DeviceCreateInfo
+            {
+                SType = StructureType.DeviceCreateInfo,
+                EnabledExtensionCount = 0,
+                EnabledLayerCount = 0,
+                PpEnabledExtensionNames = null,
+                PpEnabledLayerNames = null,
+                PQueueCreateInfos = pQueueCreateInfos,
+                QueueCreateInfoCount = (uint)queueCreateInfos.Length,
+            };
+            fixed (Device* pDevice = &_device)
+            {
+                if (Vulkan.CreateDevice(device, &createInfo, null, pDevice) != Result.Success)
+                {
+                    throw new Exception("Failed to create logical device!");
+                }
             }
         }
 
-        Vulkan.GetDeviceQueue(_device, graphicsIndex, 0, out _graphicsQueue);
-    }
-
-    private void DisposeDebugger()
-    {
-        if (!_options.EnableValidationLayers || _debugUtils is null)
-            return;
-
-        _debugUtils.DestroyDebugUtilsMessenger(Instance, _debugMessenger, null);
-    }
-
-    private bool CanSupportValidationLayers()
-    {
-        uint layerCount = 0;
-        Vulkan.EnumerateInstanceLayerProperties(ref layerCount, null);
-
-        var layerProperties = new LayerProperties[layerCount];
-        fixed (LayerProperties* pLayerProperties = layerProperties)
-            Vulkan.EnumerateInstanceLayerProperties(ref layerCount, pLayerProperties);
-
-        var layerNames = layerProperties
-            .Select(layer => Marshal.PtrToStringAnsi((nint)layer.LayerName))
-            .ToHashSet();
-
-        return ValidationLayers.All(layerNames.Contains);
+        Vulkan.GetDeviceQueue(_device, graphics, 0, out _graphicsQueue);
+        Vulkan.GetDeviceQueue(_device, present, 0, out _presentQueue);
     }
 
     private uint OnValidationDebug(
@@ -275,6 +304,9 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     public void Dispose()
     {
         Vulkan.DestroyDevice(_device, null);
+        _khrSurface.DestroySurface(Instance, _surface, null);
+        _debugUtils?.DestroyDebugUtilsMessenger(Instance, _debugMessenger, null);
         Vulkan.DestroyInstance(Instance, null);
+        Vulkan.Dispose();
     }
 }
