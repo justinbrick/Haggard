@@ -49,6 +49,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
 
         InitializeVulkan();
         InitializeDebugger();
+        InitializeSurface();
         InitializeDevice();
     }
 
@@ -89,6 +90,10 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         uint familySize;
         Vulkan.GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &familySize, null);
         var familyProperties = new QueueFamilyProperties2[familySize];
+        for (var i = 0; i < familyProperties.Length; i++)
+        {
+            familyProperties[i].SType = StructureType.QueueFamilyProperties2;
+        }
         fixed (QueueFamilyProperties2* pFamilyProperties = familyProperties)
             Vulkan.GetPhysicalDeviceQueueFamilyProperties2(
                 physicalDevice,
@@ -142,16 +147,10 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     private void InitializeVulkan()
     {
         if (_windowManager.CurrentWindow.VkSurface is null)
-            throw new Exception("IWindow.VkSurface is null");
+            throw new Exception("IWindow.VkSurface is null.");
 
-        if (!Vulkan.TryGetInstanceExtension(Instance, out _khrSurface))
-        {
-            throw new Exception("Failed to get KhrSurface.");
-        }
-
-        _surface = _windowManager
-            .CurrentWindow.VkSurface.Create<AllocationCallbacks>(Instance.ToHandle(), null)
-            .ToSurface();
+        if (_options.EnableValidationLayers && !EnsureValidationLayers())
+            throw new Exception("Validation layers not found. Are proper libraries installed?");
 
         var appInfo = new ApplicationInfo
         {
@@ -169,11 +168,10 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             PApplicationInfo = &appInfo,
         };
 
-        var extensions = _windowManager.CurrentWindow.VkSurface.GetRequiredExtensions(
-            out var extensionCount
-        );
-        createInfo.EnabledExtensionCount = extensionCount;
-        createInfo.PpEnabledExtensionNames = extensions;
+        var requiredExtensions = GetRequiredInstanceExtensions();
+        var pRequiredExtensions = (byte**)SilkMarshal.StringArrayToPtr(requiredExtensions);
+        createInfo.EnabledExtensionCount = (uint)requiredExtensions.Length;
+        createInfo.PpEnabledExtensionNames = pRequiredExtensions;
 
         if (_options.EnableValidationLayers)
         {
@@ -220,6 +218,18 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         }
     }
 
+    private void InitializeSurface()
+    {
+        if (_windowManager.CurrentWindow.VkSurface is not { } surface)
+            throw new Exception("Could not get Vulkan Surface.");
+
+        if (!Vulkan.TryGetInstanceExtension(Instance, out _khrSurface))
+        {
+            throw new Exception("Failed to get KhrSurface.");
+        }
+        _surface = surface.Create<AllocationCallbacks>(Instance.ToHandle(), null).ToSurface();
+    }
+
     private void InitializeDevice()
     {
         var maybeDevice = _vulkanDeviceManager.GetPhysicalDevice(
@@ -242,7 +252,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             .Select(static i => new DeviceQueueCreateInfo
             {
                 SType = StructureType.DeviceQueueCreateInfo,
-                QueueFamilyIndex = 1,
+                QueueFamilyIndex = i,
                 QueueCount = 1,
                 PQueuePriorities = null,
             })
@@ -253,14 +263,15 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             queueCreateInfos[i].PQueuePriorities = &queuePriority;
         }
 
+        var deviceExtensions = GetRequiredDeviceExtensions();
         fixed (DeviceQueueCreateInfo* pQueueCreateInfos = queueCreateInfos)
         {
             var createInfo = new DeviceCreateInfo
             {
                 SType = StructureType.DeviceCreateInfo,
-                EnabledExtensionCount = 0,
+                EnabledExtensionCount = (uint)deviceExtensions.Length,
                 EnabledLayerCount = 0,
-                PpEnabledExtensionNames = null,
+                PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(deviceExtensions),
                 PpEnabledLayerNames = null,
                 PQueueCreateInfos = pQueueCreateInfos,
                 QueueCreateInfoCount = (uint)queueCreateInfos.Length,
@@ -272,10 +283,44 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
                     throw new Exception("Failed to create logical device!");
                 }
             }
+            SilkMarshal.Free((IntPtr)createInfo.PpEnabledExtensionNames);
         }
 
         Vulkan.GetDeviceQueue(_device, graphics, 0, out _graphicsQueue);
         Vulkan.GetDeviceQueue(_device, present, 0, out _presentQueue);
+    }
+
+    private string[] GetRequiredInstanceExtensions()
+    {
+        var extensions = _windowManager.CurrentWindow.VkSurface!.GetRequiredExtensions(
+            out var count
+        );
+        var list = SilkMarshal.PtrToStringArray((IntPtr)extensions, (int)count).ToList();
+        if (_options.EnableValidationLayers)
+            list.Add(ExtDebugUtils.ExtensionName);
+
+        return list.ToArray();
+    }
+
+    private string[] GetRequiredDeviceExtensions()
+    {
+        return [KhrSwapchain.ExtensionName];
+    }
+
+    private bool EnsureValidationLayers()
+    {
+        uint layerCount = 0;
+        Vulkan.EnumerateInstanceLayerProperties(ref layerCount, null);
+
+        var layerProperties = new LayerProperties[layerCount];
+        fixed (LayerProperties* pLayerProperties = layerProperties)
+            Vulkan.EnumerateInstanceLayerProperties(ref layerCount, pLayerProperties);
+
+        var layerNames = layerProperties
+            .Select(layer => Marshal.PtrToStringAnsi((nint)layer.LayerName))
+            .ToHashSet();
+
+        return ValidationLayers.All(layerNames.Contains);
     }
 
     private uint OnValidationDebug(

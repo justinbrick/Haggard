@@ -15,13 +15,14 @@ public sealed class HaggardWindowManager : IWindowManager
         _logger = logger;
         _gameEngine = engine;
         CurrentWindow = Window.Create(WindowOptions.DefaultVulkan);
+        CurrentWindow.Initialize();
         CurrentWindow.Closing += OnWindowClosing;
         CurrentWindow.Render += OnWindowRender;
         CurrentWindow.Initialize();
         engine.Starting += OnEngineStarting;
         engine.Stopping += OnEngineStopping;
     }
-    
+
     private void OnEngineStarting()
     {
         _logger.LogTrace("Initializing window during start");
@@ -34,14 +35,15 @@ public sealed class HaggardWindowManager : IWindowManager
     private void OnWindowClosing()
     {
         _logger.LogTrace("Window closed, stopping engine");
-        _gameEngine.Stopping -= OnEngineStopping;  
+        _gameEngine.Stopping -= OnEngineStopping;
         _gameEngine.StopAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
     private void OnEngineStopping()
     {
         _logger.LogTrace("Closing window gracefully");
-        if (CurrentWindow is null) return;
+        if (CurrentWindow is null)
+            return;
         CurrentWindow.Closing -= OnWindowClosing;
         CurrentWindow.Close();
         CurrentWindow.Dispose();
@@ -49,7 +51,7 @@ public sealed class HaggardWindowManager : IWindowManager
     }
 
     private void OnWindowRender(double deltaTime)
-    { 
+    {
         Render?.Invoke((float)deltaTime);
     }
 }
