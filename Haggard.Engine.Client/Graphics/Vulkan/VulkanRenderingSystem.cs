@@ -28,7 +28,8 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     public IDeviceManager DeviceManager => _vulkanDeviceManager;
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
-    private Device _device;
+    private Device _logicalDevice;
+    private PhysicalDevice _physicalDevice;
     private Queue _graphicsQueue;
     private Queue _presentQueue;
     private KhrSurface _khrSurface = null!;
@@ -51,6 +52,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         InitializeDebugger();
         InitializeSurface();
         InitializeDevice();
+        InitializeSwapchain();
     }
 
     private void OnWindowClosing() { }
@@ -232,23 +234,25 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
 
     private void InitializeDevice()
     {
-        var maybeDevice = _vulkanDeviceManager.GetPhysicalDevice(
-            _vulkanDeviceManager.GetDevices().First()
-        );
+        var stats = _vulkanDeviceManager
+            .GetPhysicalDevices()
+            .Select(d => new
+            {
+                device = d.Item1,
+                properties = d.Item2,
+                supportsExtensions = EnsureDeviceExtensions(d.Item1),
+                families = GetQueueFamilies(d.Item1),
+            })
+            .FirstOrDefault(d =>
+                d.supportsExtensions && d.families is { Graphics: not null, Presentation: not null }
+            );
 
-        if (maybeDevice is not { } deviceTuple)
-            throw new Exception("Could not get device!");
-
-        var device = deviceTuple.Item1;
-        if (
-            GetQueueFamilies(device)
-            is not { Graphics: { } graphics, Presentation: { } present } families
-        )
-            throw new Exception("Could not get graphics or queue family!");
+        if (stats is null)
+            throw new Exception("Could not find any suitable device!");
 
         var queuePriority = 1f;
-        var queueCreateInfos = families
-            .ToSet()
+        var queueCreateInfos = stats
+            .families.ToSet()
             .Select(static i => new DeviceQueueCreateInfo
             {
                 SType = StructureType.DeviceQueueCreateInfo,
@@ -264,21 +268,22 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         }
 
         var deviceExtensions = GetRequiredDeviceExtensions();
+        _physicalDevice = stats.device;
         fixed (DeviceQueueCreateInfo* pQueueCreateInfos = queueCreateInfos)
         {
             var createInfo = new DeviceCreateInfo
             {
                 SType = StructureType.DeviceCreateInfo,
-                EnabledExtensionCount = (uint)deviceExtensions.Length,
                 EnabledLayerCount = 0,
-                PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(deviceExtensions),
                 PpEnabledLayerNames = null,
+                EnabledExtensionCount = (uint)deviceExtensions.Length,
+                PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(deviceExtensions),
                 PQueueCreateInfos = pQueueCreateInfos,
                 QueueCreateInfoCount = (uint)queueCreateInfos.Length,
             };
-            fixed (Device* pDevice = &_device)
+            fixed (Device* pDevice = &_logicalDevice)
             {
-                if (Vulkan.CreateDevice(device, &createInfo, null, pDevice) != Result.Success)
+                if (Vulkan.CreateDevice(stats.device, &createInfo, null, pDevice) != Result.Success)
                 {
                     throw new Exception("Failed to create logical device!");
                 }
@@ -286,8 +291,43 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             SilkMarshal.Free((IntPtr)createInfo.PpEnabledExtensionNames);
         }
 
-        Vulkan.GetDeviceQueue(_device, graphics, 0, out _graphicsQueue);
-        Vulkan.GetDeviceQueue(_device, present, 0, out _presentQueue);
+        Vulkan.GetDeviceQueue(
+            _logicalDevice,
+            stats.families.Graphics!.Value,
+            0,
+            out _graphicsQueue
+        );
+        Vulkan.GetDeviceQueue(
+            _logicalDevice,
+            stats.families.Presentation!.Value,
+            0,
+            out _presentQueue
+        );
+    }
+
+    private void InitializeSwapchain()
+    {
+        var details = GetSwapchainDetails(_physicalDevice);
+        var format = details.Formats.First();
+        var bounds = _windowManager.CurrentWindow.FramebufferSize;
+
+        // TODO:
+        // These need to be configured as desired, and proper frameworks set up for configuring.
+        var createInfo = new SwapchainCreateInfoKHR
+        {
+            SType = StructureType.SwapchainCreateInfoKhr,
+            MinImageCount = details.SurfaceCapabilities.MinImageCount + 1,
+            ImageFormat = format.Format,
+            ImageColorSpace = format.ColorSpace,
+            ImageExtent = new Extent2D((uint)bounds.X, (uint)bounds.Y),
+            ImageArrayLayers = 1,
+            ImageUsage = ImageUsageFlags.ColorAttachmentBit,
+            ImageSharingMode = SharingMode.Exclusive,
+            QueueFamilyIndexCount = 0,
+            PQueueFamilyIndices = null,
+        };
+
+        // TODO: if present & graphics are separate, not exclusive image sharing mode.
     }
 
     private string[] GetRequiredInstanceExtensions()
@@ -302,7 +342,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         return list.ToArray();
     }
 
-    private string[] GetRequiredDeviceExtensions()
+    private static string[] GetRequiredDeviceExtensions()
     {
         return [KhrSwapchain.ExtensionName];
     }
@@ -321,6 +361,92 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             .ToHashSet();
 
         return ValidationLayers.All(layerNames.Contains);
+    }
+
+    private bool EnsureDeviceExtensions(in PhysicalDevice physicalDevice)
+    {
+        var required = GetRequiredDeviceExtensions().ToHashSet();
+
+        uint count = 0;
+        Vulkan.EnumerateDeviceExtensionProperties(physicalDevice, (byte*)null, ref count, null);
+        var extensionProperties = new ExtensionProperties[count];
+        fixed (ExtensionProperties* pExtensionProperties = extensionProperties)
+            Vulkan.EnumerateDeviceExtensionProperties(
+                physicalDevice,
+                (byte*)null,
+                ref count,
+                pExtensionProperties
+            );
+
+        foreach (var property in extensionProperties)
+        {
+            var name = SilkMarshal.PtrToString((IntPtr)property.ExtensionName);
+            if (name is null)
+            {
+                _logger.LogWarning("Found null device property, is this normal?");
+                continue;
+            }
+            required.Remove(name);
+        }
+
+        // If there's none, all requirements met.
+        return required.Count == 0;
+    }
+
+    private sealed class SwapchainDetails
+    {
+        public SurfaceCapabilitiesKHR SurfaceCapabilities;
+        public required SurfaceFormatKHR[] Formats;
+        public required PresentModeKHR[] PresentModes;
+    }
+
+    private SwapchainDetails GetSwapchainDetails(in PhysicalDevice physicalDevice)
+    {
+        _khrSurface.GetPhysicalDeviceSurfaceCapabilities(
+            physicalDevice,
+            _surface,
+            out var surfaceCapabilities
+        );
+
+        // Formats
+        uint formatCount = 0;
+        _khrSurface.GetPhysicalDeviceSurfaceFormats(physicalDevice, _surface, &formatCount, null);
+        var formats = new SurfaceFormatKHR[formatCount];
+        fixed (SurfaceFormatKHR* pFormats = formats)
+        {
+            _khrSurface.GetPhysicalDeviceSurfaceFormats(
+                physicalDevice,
+                _surface,
+                &formatCount,
+                pFormats
+            );
+        }
+
+        // Present Modes
+        uint presentCount = 0;
+        _khrSurface.GetPhysicalDeviceSurfacePresentModes(
+            physicalDevice,
+            _surface,
+            &presentCount,
+            null
+        );
+        var presentModes = new PresentModeKHR[presentCount];
+        fixed (PresentModeKHR* pPresentModes = presentModes)
+        {
+            _khrSurface.GetPhysicalDeviceSurfacePresentModes(
+                physicalDevice,
+                _surface,
+                &presentCount,
+                pPresentModes
+            );
+        }
+
+        return new SwapchainDetails
+        {
+            SurfaceCapabilities = surfaceCapabilities,
+            Formats = formats,
+            PresentModes = presentModes,
+        };
     }
 
     private uint OnValidationDebug(
@@ -348,7 +474,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
 
     public void Dispose()
     {
-        Vulkan.DestroyDevice(_device, null);
+        Vulkan.DestroyDevice(_logicalDevice, null);
         _khrSurface.DestroySurface(Instance, _surface, null);
         _debugUtils?.DestroyDebugUtilsMessenger(Instance, _debugMessenger, null);
         Vulkan.DestroyInstance(Instance, null);
