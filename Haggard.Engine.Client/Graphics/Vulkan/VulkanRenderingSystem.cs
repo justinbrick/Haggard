@@ -21,11 +21,10 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     private readonly ILogger<VulkanRenderingSystem> _logger;
     private readonly IGameEngine _gameEngine;
     private readonly VulkanRenderingSystemOptions _options = new();
-    private readonly VulkanDeviceManager _vulkanDeviceManager;
+    private readonly VulkanDeviceManager _deviceManager;
     private readonly IWindowManager _windowManager;
     public readonly Vk Vulkan = Vk.GetApi();
     internal Instance Instance;
-    public IDeviceManager DeviceManager => _vulkanDeviceManager;
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
     private Device _logicalDevice;
@@ -35,14 +34,16 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     private KhrSurface _khrSurface = null!;
     private SurfaceKHR _surface;
 
+    public IDeviceManager DeviceManager => _deviceManager;
+
     public VulkanRenderingSystem(
         ILogger<VulkanRenderingSystem> logger,
         IGameEngine gameEngine,
         IWindowManager windowManager
     )
     {
-        _vulkanDeviceManager = new VulkanDeviceManager(this);
-        _vulkanDeviceManager.OnDeviceSelected += OnDeviceSelected;
+        _deviceManager = new VulkanDeviceManager(this);
+        _deviceManager.OnDeviceSuitableQuery += GetRequiredDeviceExtensions;
         _logger = logger;
         _gameEngine = gameEngine;
         _windowManager = windowManager;
@@ -51,7 +52,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         InitializeVulkan();
         InitializeDebugger();
         InitializeSurface();
-        InitializeDevice();
+        _deviceManager.TrySelectDevice(DeviceSelectionStrategy.PreferDedicated);
         InitializeSwapchain();
     }
 
@@ -107,7 +108,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         {
             var properties = familyProperties[i];
             var flags = properties.QueueFamilyProperties.QueueFlags;
-            if (flags.HasFlag(QueueFlags.GraphicsBit))
+            if (flags.HasFlag(QueueFlags.GraphicsBit) && !family.Graphics.HasValue)
                 family.Graphics = i;
             _khrSurface.GetPhysicalDeviceSurfaceSupport(
                 physicalDevice,
@@ -115,7 +116,7 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
                 _surface,
                 out var supported
             );
-            if (supported)
+            if (supported && !family.Presentation.HasValue)
             {
                 family.Presentation = i;
             }
@@ -123,11 +124,6 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
 
         return family;
     }
-
-    private void OnDeviceSelected(
-        PhysicalDevice physicalDevice,
-        PhysicalDeviceProperties2 physicalDeviceProperties
-    ) { }
 
     private DebugUtilsMessengerCreateInfoEXT CreateDebuggerInfo()
     {
@@ -232,83 +228,12 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         _surface = surface.Create<AllocationCallbacks>(Instance.ToHandle(), null).ToSurface();
     }
 
-    private void InitializeDevice()
-    {
-        var stats = _vulkanDeviceManager
-            .GetPhysicalDevices()
-            .Select(d => new
-            {
-                device = d.Item1,
-                properties = d.Item2,
-                supportsExtensions = EnsureDeviceExtensions(d.Item1),
-                families = GetQueueFamilies(d.Item1),
-            })
-            .FirstOrDefault(d =>
-                d.supportsExtensions && d.families is { Graphics: not null, Presentation: not null }
-            );
-
-        if (stats is null)
-            throw new Exception("Could not find any suitable device!");
-
-        var queuePriority = 1f;
-        var queueCreateInfos = stats
-            .families.ToSet()
-            .Select(static i => new DeviceQueueCreateInfo
-            {
-                SType = StructureType.DeviceQueueCreateInfo,
-                QueueFamilyIndex = i,
-                QueueCount = 1,
-                PQueuePriorities = null,
-            })
-            .ToArray();
-
-        for (var i = 0; i < queueCreateInfos.Length; i++)
-        {
-            queueCreateInfos[i].PQueuePriorities = &queuePriority;
-        }
-
-        var deviceExtensions = GetRequiredDeviceExtensions();
-        _physicalDevice = stats.device;
-        fixed (DeviceQueueCreateInfo* pQueueCreateInfos = queueCreateInfos)
-        {
-            var createInfo = new DeviceCreateInfo
-            {
-                SType = StructureType.DeviceCreateInfo,
-                EnabledLayerCount = 0,
-                PpEnabledLayerNames = null,
-                EnabledExtensionCount = (uint)deviceExtensions.Length,
-                PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(deviceExtensions),
-                PQueueCreateInfos = pQueueCreateInfos,
-                QueueCreateInfoCount = (uint)queueCreateInfos.Length,
-            };
-            fixed (Device* pDevice = &_logicalDevice)
-            {
-                if (Vulkan.CreateDevice(stats.device, &createInfo, null, pDevice) != Result.Success)
-                {
-                    throw new Exception("Failed to create logical device!");
-                }
-            }
-            SilkMarshal.Free((IntPtr)createInfo.PpEnabledExtensionNames);
-        }
-
-        Vulkan.GetDeviceQueue(
-            _logicalDevice,
-            stats.families.Graphics!.Value,
-            0,
-            out _graphicsQueue
-        );
-        Vulkan.GetDeviceQueue(
-            _logicalDevice,
-            stats.families.Presentation!.Value,
-            0,
-            out _presentQueue
-        );
-    }
-
     private void InitializeSwapchain()
     {
         var details = GetSwapchainDetails(_physicalDevice);
+        // TODO: Change based off of settings.
         var format = details.Formats.First();
+        var presentMode = details.PresentModes.First();
         var bounds = _windowManager.CurrentWindow.FramebufferSize;
 
         // TODO:
@@ -325,9 +250,20 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
             ImageSharingMode = SharingMode.Exclusive,
             QueueFamilyIndexCount = 0,
             PQueueFamilyIndices = null,
+            PreTransform = details.SurfaceCapabilities.CurrentTransform,
+            CompositeAlpha = CompositeAlphaFlagsKHR.OpaqueBitKhr,
+            PresentMode = presentMode,
+            Clipped = true,
         };
 
         // TODO: if present & graphics are separate, not exclusive image sharing mode.
+        if (_families.Graphics != _families.Presentation)
+        {
+            var array = _families.ToSet().ToArray();
+            createInfo.ImageSharingMode = SharingMode.Concurrent;
+            createInfo.QueueFamilyIndexCount = 2;
+            createInfo.PQueueFamilyIndices = array;
+        }
     }
 
     private string[] GetRequiredInstanceExtensions()
@@ -342,9 +278,14 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
         return list.ToArray();
     }
 
-    private static string[] GetRequiredDeviceExtensions()
+    private static void GetRequiredDeviceExtensions(
+        in VulkanDeviceManager.DeviceDetails required,
+        ref bool suitable
+    )
     {
-        return [KhrSwapchain.ExtensionName];
+        if (!required.AvailableExtensions.Contains(KhrSwapchain.ExtensionName))
+            suitable = false;
+        required.RequiredExtensions.Add(KhrSwapchain.ExtensionName);
     }
 
     private bool EnsureValidationLayers()
@@ -366,31 +307,6 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
     private bool EnsureDeviceExtensions(in PhysicalDevice physicalDevice)
     {
         var required = GetRequiredDeviceExtensions().ToHashSet();
-
-        uint count = 0;
-        Vulkan.EnumerateDeviceExtensionProperties(physicalDevice, (byte*)null, ref count, null);
-        var extensionProperties = new ExtensionProperties[count];
-        fixed (ExtensionProperties* pExtensionProperties = extensionProperties)
-            Vulkan.EnumerateDeviceExtensionProperties(
-                physicalDevice,
-                (byte*)null,
-                ref count,
-                pExtensionProperties
-            );
-
-        foreach (var property in extensionProperties)
-        {
-            var name = SilkMarshal.PtrToString((IntPtr)property.ExtensionName);
-            if (name is null)
-            {
-                _logger.LogWarning("Found null device property, is this normal?");
-                continue;
-            }
-            required.Remove(name);
-        }
-
-        // If there's none, all requirements met.
-        return required.Count == 0;
     }
 
     private sealed class SwapchainDetails
@@ -474,8 +390,8 @@ public sealed unsafe class VulkanRenderingSystem : IRenderingSystem, IDisposable
 
     public void Dispose()
     {
-        Vulkan.DestroyDevice(_logicalDevice, null);
         _khrSurface.DestroySurface(Instance, _surface, null);
+        _deviceManager.Dispose();
         _debugUtils?.DestroyDebugUtilsMessenger(Instance, _debugMessenger, null);
         Vulkan.DestroyInstance(Instance, null);
         Vulkan.Dispose();

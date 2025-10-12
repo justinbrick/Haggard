@@ -6,3 +6,6 @@ alike, so that people can contribute new rendering engines in the future.
 
 For reference, Unreal Engine's RHI implementation should be considered a baseline, but without any of the
 tech debt that they introduce via C++ and other bad implementations that they have.
+
+Side note: WebGPU provides a decent interface as well, both of these might be usable as inspiration,
+but both require modification to work for this use case.
